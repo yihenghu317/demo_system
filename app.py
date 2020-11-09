@@ -158,20 +158,20 @@ self_defined_upload_system = html.Div([
 
 movie_upload_system = html.Div([
     html.Div([
-        html.Label("Upload edge file",),
-        html.Label("e.g. left node id, right node id", style={
+        html.Label("Upload data file",),
+        html.Label("e.g. user id, movie id", style={
                    'font-size': '12px', 'color': "grey", "marginLeft": '10px'})
     ]),
     generate_upload_box("movie-edge-upload"),
 
     html.Div([
-        html.Label("Upload left node file"),
+        html.Label("Upload user file"),
         html.Label("e.g. id, name", style={
                    'font-size': '12px', 'color': "grey", "marginLeft": '10px'})
     ]),
     generate_upload_box('movie-left-node'),
     html.Div([
-        html.Label("Upload right node file"),
+        html.Label("Upload movie file"),
         html.Label("e.g. id, name", style={
                    'font-size': '12px', 'color': "grey", "marginLeft": '10px'})
     ]),
