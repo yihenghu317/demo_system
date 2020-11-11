@@ -24,3 +24,6 @@ There are two folders for seperate systems.
 One is to upload into author paper system which has two examples. 
 
 The other is for the user movie system which has one set of data.
+
+
+We provide process_author_paper_data.py and process_user_movie_data.py to process the original data.
