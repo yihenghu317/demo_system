@@ -7,15 +7,60 @@ from wordcloud import WordCloud
 import networkx as nx
 
 
-def quicksort(arr):
-    if len(arr) <= 1:
-        return arr
-    pivot = arr[len(arr)//2]
-    left = [x for x in arr if x < pivot]
-    middle = [x for x in arr if x == pivot]
-    right = [x for x in arr if x > pivot]
-    return quicksort(left) + middle + quicksort(right)
+# def quicksort(arr):
+#     if len(arr) <= 1:
+#         return arr
+#     pivot = arr[len(arr)//2]
+#     left = [x for x in arr if x < pivot]
+#     middle = [x for x in arr if x == pivot]
+#     right = [x for x in arr if x > pivot]
+#     return quicksort(left) + middle + quicksort(right)
 
+def quicksort(arr):
+    mergeSort(arr)
+    return arr
+
+
+def mergeSort(arr):
+    if len(arr) > 1:
+ 
+         # Finding the mid of the array
+        mid = len(arr)//2
+ 
+        # Dividing the array elements
+        L = arr[:mid]
+ 
+        # into 2 halves
+        R = arr[mid:]
+ 
+        # Sorting the first half
+        mergeSort(L)
+ 
+        # Sorting the second half
+        mergeSort(R)
+ 
+        i = j = k = 0
+ 
+        # Copy data to temp arrays L[] and R[]
+        while i < len(L) and j < len(R):
+            if L[i] < R[j]:
+                arr[k] = L[i]
+                i += 1
+            else:
+                arr[k] = R[j]
+                j += 1
+            k += 1
+ 
+        # Checking if any element was left
+        while i < len(L):
+            arr[k] = L[i]
+            i += 1
+            k += 1
+ 
+        while j < len(R):
+            arr[k] = R[j]
+            j += 1
+            k += 1
 
 def find_neighbor(edges, node):
     result = []
@@ -247,6 +292,8 @@ def generate_word_cloud(text):
     color_list = []
 
     for (word, freq), fontsize, position, orientation, color in word_cloud.layout_:
+        if len(word) <= 1:
+            continue
         word_list.append(word)
         freq_list.append(freq)
         fontsize_list.append(fontsize)

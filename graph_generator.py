@@ -225,7 +225,6 @@ def construct_graph_db(L_nodes, R_nodes, edges, meta, engine, color_list=None,  
     wing_right = {}
 
     wing_no = get_edge_wingno(meta, engine)
-
     for edge in edges:
         wn = wing_no[(edge[0], edge[1])]
         if edge[0] not in wing_left.keys():
@@ -240,13 +239,13 @@ def construct_graph_db(L_nodes, R_nodes, edges, meta, engine, color_list=None,  
             if wn > wing_right[edge[1]]:
                 wing_right[edge[1]] = wn
 
+
     # sort wing_left and wing_right
     wing_left = list(
         dict(sorted(wing_left.items(), key=lambda kv: kv[1])).keys())
     wing_right = list(
         dict(sorted(wing_right.items(), key=lambda kv: kv[1])).keys())
     # wing_right = list(wing_right.keys())
-
     length = (float)(max(len(wing_left), len(wing_right)))
 
     l_scale = 0
@@ -354,6 +353,7 @@ def construct_graph_db(L_nodes, R_nodes, edges, meta, engine, color_list=None,  
         node_text.append(r_node_name[node])
         i += 1
 
+
     node_trace['x'] = node_trace_x
     node_trace['y'] = node_trace_y
     node_trace['text'] = node_text
@@ -410,7 +410,7 @@ def wing_node_select(input_data):
     model = input_data['model']
 
     no_node = False
-    if node is not None and node is not "":
+    if node is not None and node != "":
         # node = get_id(meta, engine, node)
         node, ninl = get_id_by_name(meta, engine, node)
         if node is None:

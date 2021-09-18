@@ -6,7 +6,7 @@ import sys
 # example: python process_user_movie_data.py ./ml-100k/u.data ./ml-100k/u.user ./ml-100k/u.item 20 11
 
 def process_file(filename,user_filename , movie_filename, age, genres):
-    file1 = open(movie_filename,'r')
+    file1 = open(movie_filename,'r',encoding = "ISO-8859-1")
     lines = file1.readlines() 
     new_fn_name = "user_movie_" +  str(age) + "_" +  '_'.join(genres) + '.data'
 

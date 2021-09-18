@@ -1,13 +1,16 @@
 import base64
 import os
+import json
+
+from sqlalchemy.sql.base import NO_ARG
 import dash
-import dash_core_components as dcc
+from dash import dcc
 import dash_bootstrap_components as dbc
-import dash_html_components as html
+from dash import html
 import networkx as nx
 from collections import Counter
 from dash.dependencies import Input, Output, State
-import dash_table
+from dash import dash_table
 from dash.exceptions import PreventUpdate
 import plotly.graph_objs as go
 # from functions import *
@@ -36,20 +39,10 @@ app = dash.Dash(__name__,
                 external_stylesheets=[dbc.themes.BOOTSTRAP], suppress_callback_exceptions=True)
 
 color_list = []
-max_compare = 4
-Exisiting_Graph = False
-Last_modified = []
 New_File = False
-New_File_compare = False
-prev_wing_no = 0
+max_compare = 2
+max_wing = -1
 
-
-Trigger_compare_alpha = False
-Trigger_compare_beta = False
-Trigger_compare = False
-Trigger_compare_0 = False
-Trigger_select_value = False
-First_compare_0 = False
 
 ################### upload modal #####################################
 
@@ -183,10 +176,10 @@ submit_button = dbc.Button('Submit', id='upload-submit-button')
 
 back_button = dbc.Button('Back', id='back-button', style={'marginLeft': '85%'})
 
-warning_label = html.Label(id='submit-result-label', children=[], style={
-    'color': 'red',
-    'marginLeft': '20px'
-})
+# warning_label = html.Label(id='submit-result-label', children=[], style={
+#     'color': 'red',
+#     'marginLeft': '20px'
+# })
 
 upload_modal = html.Div([
     dcc.Store(id='select-upload-data-type'),
@@ -204,6 +197,13 @@ upload_modal = html.Div([
                         dbc.Button("Close", id="close", style={
                             'marginLeft': '10%'}),
                     ]),
+                    dbc.Alert(
+                        "Incorrect Data.",
+                        id = 'upload-warning-message',
+                        dismissable=True,
+                        is_open=False,
+                        color='red',
+                    ),
                     dbc.ModalBody(id='upload-data-type-section',
                                   children=[input_item_types]),
                 ],
@@ -339,7 +339,9 @@ Left_col = dbc.Jumbotron(
 )
 
 ##################### upload modal callbacks #######################
-
+result_labels_pre = ["self-defined-edge-upload", 'self-defined-left-node', 'self-defined-right-node',
+                     'author-paper-upload-data', 'movie-edge-upload', 'movie-left-node', 'movie-right-node']
+Trigger_submit_all = [False]*len(result_labels_pre)
 
 def read_download_content(contents, names):
     data = contents.encode("utf8").split(b";base64,")[1]
@@ -361,14 +363,15 @@ Submit_click_label = False
     [State("modal", "is_open")],
 )
 def toggle_modal(n1, n2, data, is_open):
-    global Submit_click
-    if data is not None and data['result'] == None and Submit_click:
-        Submit_click = False
+    if not n1 and not n2 and not data:
         raise PreventUpdate
-    Submit_click = False
-    if n1 or n2 or data:
+    ctx = dash.callback_context.triggered[0]['prop_id']
+    if ctx == 'close.n_clicks' or ctx == 'open.n_clicks':
         return not is_open
-    return is_open
+
+    if data is not None and data['result'] == None: #  prevent update if upload invalid data
+        raise PreventUpdate
+    return not is_open
 
 
 @app.callback(
@@ -404,29 +407,13 @@ def display_correponding_data_type_section(data, back):
     if data is None:
         raise PreventUpdate
     if data['select_type'] == 'author-paper':
-        return [author_paper_upload, submit_button, warning_label, back_button]
+        return [author_paper_upload, submit_button,  back_button]
     if data['select_type'] == 'self-defined':
-        return [self_defined_upload_system, submit_button, warning_label, back_button]
+        return [self_defined_upload_system, submit_button, back_button]
     if data['select_type'] == 'user-movie':
-        return [movie_upload_system, submit_button, warning_label, back_button]
+        return [movie_upload_system, submit_button, back_button]
 
     raise PreventUpdate
-
-
-@app.callback(
-    Output('submit-result-label', 'children'),
-    [Input('current-upload-data', 'data'), ],
-)
-def display_warning_or_not(data):
-    if data is None:
-        raise PreventUpdate
-    global Submit_click_label
-
-    if data['result'] == None and Submit_click_label:
-        Submit_click_label = False
-        return "Incorrect Data"
-    Submit_click_label = False
-    return ""
 
 
 @app.callback(
@@ -449,9 +436,7 @@ def parse_contents(contents):
     return decoded
 
 
-result_labels_pre = ["self-defined-edge-upload", 'self-defined-left-node', 'self-defined-right-node',
-                     'author-paper-upload-data', 'movie-edge-upload', 'movie-left-node', 'movie-right-node']
-Trigger_submit_all = [False]*len(result_labels_pre)
+
 
 
 @app.callback(
@@ -465,14 +450,18 @@ Trigger_submit_all = [False]*len(result_labels_pre)
 def display_submit(n_clicks, data, self_data, author_paper_data, user_movie_data):
     global Submit_click
     global Submit_click_label
-    global New_File_compare
 
     Submit_click = True
     Submit_click_label = True
 
     if n_clicks is None or data is None:
         raise PreventUpdate
-    # return [html.Label([n_clicks, data['select_type']])]
+   
+
+
+    global color_list
+    color_list = []     # reset colot list
+
     content = None
 
     global New_File
@@ -503,7 +492,6 @@ def display_submit(n_clicks, data, self_data, author_paper_data, user_movie_data
 
     if result is not None:
         global result_labels_pre
-        New_File_compare = True
         Trigger_submit_all = [True]*len(result_labels_pre)
     return {'type': data['select_type'], 'content': content, 'result': result}
 
@@ -538,7 +526,7 @@ def store_self_data(edge, left, right):
     data['edge'] = parse_contents(edge)
     data['left'] = parse_contents(left)
     data['right'] = parse_contents(right)
-
+    delete_files()
     return data
 
 
@@ -556,7 +544,7 @@ def store_self_data(edge, left, right):
     data['edge'] = parse_contents(edge)
     data['left'] = parse_contents(left)
     data['right'] = parse_contents(right)
-
+    delete_files()
     return data
 
 
@@ -566,17 +554,31 @@ for c, i in enumerate(result_labels_pre):
     @app.callback(
         Output(ul_id, 'children'),
         [Input(i, 'contents'),
-         Input('current-upload-data', 'data')]
+        #  Input('current-upload-data', 'data'),
+         Input('open','n_clicks')],
     )
-    def display_upload_result(contents, upload_data, index=c):
+    def display_upload_result(contents, n_clicks,  index=c):
+        ctx = [i['prop_id'] for i in dash.callback_context.triggered]
         global Trigger_submit_all
-        if contents is None:
+        if contents is None or 'open.n_clicks' in ctx:
             return []
-        if Trigger_submit_all[index]:
-            Trigger_submit_all[index] = False
-            return []
+        # if Trigger_submit_all[index]:
+        #     Trigger_submit_all[index] = False
+        #     return []
         return "Uploaded!"
-####################################################################
+
+@app.callback(
+    Output('upload-warning-message', 'is_open'),
+    [Input('current-upload-data', 'data'),],
+    [State('upload-warning-message','is_open')]
+)
+def display_warning(data,is_open):
+    if data is not None and data['result'] == None:
+        return not is_open
+    return is_open
+
+
+#############################################################################################
 
 
 candidate_graph = []
@@ -593,8 +595,22 @@ for i in range(max_graph_no):
             dcc.Loading(id='plot-data-part-' + str(i), children=[
                 dcc.Graph(
                         id='plot-data-' + str(i),
-                        figure={'data': []},
-                        # style={'display': 'none'}
+                        figure={
+                            'data': [],
+                            'layout':{
+                                'xaxis': {
+                                    'showgrid': False,
+                                    'zeroline': False,
+                                    'showticklabels': False
+                                },
+                                'yaxis': {
+                                    'showgrid': False,
+                                    'zeroline': False,
+                                    'showticklabels': False
+                                }
+                            }
+                        },
+                        style={'display': 'none'}
                         )
             ], loading_state={'is_loading': False}, type='default')
         ], width=6, style={'display': 'none'})
@@ -652,8 +668,22 @@ data_plot = [
 
                         dcc.Graph(
                             id='degree-graph',
-                            figure={'data': []},
-
+                            figure={
+                                'data': [],
+                                'layout':{
+                                    'xaxis': {
+                                        'showgrid': False,
+                                        'zeroline': False,
+                                        'showticklabels': False
+                                    },
+                                    'yaxis': {
+                                        'showgrid': False,
+                                        'zeroline': False,
+                                        'showticklabels': False
+                                    }
+                                }
+                            },
+                            style = {'display':'none'}
                         ),
                     ], style={'width': '400px'})
 
@@ -662,7 +692,22 @@ data_plot = [
                     html.Div([
                         dcc.Graph(
                             id='tag-cloud',
-                            figure={'data': []},
+                            figure={
+                                'data': [],
+                                'layout':{
+                                    'xaxis': {
+                                        'showgrid': False,
+                                        'zeroline': False,
+                                        'showticklabels': False
+                                    },
+                                    'yaxis': {
+                                        'showgrid': False,
+                                        'zeroline': False,
+                                        'showticklabels': False
+                                    }
+                                }
+                            },
+                            style = {'display':'none'}
                         ),
                     ], style={'width': '600px'})
 
@@ -715,8 +760,6 @@ buf_count_col = [
 ]
 
 
-# app.layout = html.Div(children=[
-#     body])
 app.layout = html.Div(
     children=[
         dbc.Row([
@@ -750,86 +793,15 @@ def update_card(data):
     return html.Label(data, className="lead", style={'marginLeft': '16px'},)
 
 
-@app.callback(Output('datatable-upload-container', 'data'),
-              [Input('datatable-upload', 'filename'),
-               Input('datatable-upload', 'contents')],
-              [State('datatable-upload', 'last_modified')])
-def update_output(uploaded_filenames, uploaded_file_contents, last_modified):
-    global New_File
-    New_File = True
-
-    if uploaded_file_contents is not None:
-        data = uploaded_file_contents[0].encode("utf8").split(b";base64,")[1]
-        delete_all(meta, engine)
-        delete_files()
-        with open('./read_file/'+uploaded_filenames[0], "wb") as fp:
-            fp.write(base64.decodebytes(data))
-
-        data = base64.decodebytes(data).decode("utf-8")
-        # return [{'processed_data':process_data(data,num_nodes,uploaded_filenames[0],meta,engine)}]
-        # read_xml_to_db(data,meta,engine)
-        name = './read_file/'+uploaded_filenames[0]
-        process_data(data, name, meta, engine)
-        return [{'data': 'done'}]
-
-    raise PreventUpdate
-
-
+###################################Display Compare#############################
 @app.callback(
-    Output('bitruss-section', 'style'),
-    [Input('select-bitruss-abcore', 'value')]
+    Output('compare_section', 'style'),
+    [Input('initial-data', 'data')]
 )
-def display_bitruss_section(select_model):
-    if select_model is None:
+def show_compare_section(data):
+    if data is None:
         raise PreventUpdate
-    if select_model == 2:
-        return {'display': 'None'}
-
-
-@app.callback(
-    Output('abcore-section', 'style'),
-    [Input('select-bitruss-abcore', 'value')]
-)
-def display_abcore_section(select_model):
-    if select_model is None:
-        raise PreventUpdate
-    if select_model == 1:
-        return {'display': 'None'}
-
-
-@app.callback(Output('my-graph', 'style'),
-              [Input('my-graph', 'figure')],
-              [State('graph-data-0', 'data')]
-              )
-def update_style(figure, graph_data_0):
-
-    if figure == {}:
-        return {'display': 'none'}
-    if figure['data'] == []:
-        return {'display': 'none'}
-    # return {'display':'block'}
-    # if data_0 is not None:
-    #     if "compare" in data_0.keys() and data_0['compare'] is True:
-    #         return {'width': '50%'}
-
-    # if 'compare' in graph_data_0.keys() and graph_data_0['compare'] == False:
-    #     return {'width': '100%'}
-
-    return {'width': '100%'}
-
-
-# @app.callback(
-#     Output('graph-data-0', 'data'),
-#     [Input('if_compare', 'value')],
-#     [State('graph-data', 'data')]
-# )
-# def store_graph_1(value, data):
-#     if value is None or data is None:
-#         raise PreventUpdate
-#     if value == [1]:
-#         data['compare'] = True
-#         return data
-#     raise PreventUpdate
+    return {}
 
 
 @app.callback(
@@ -850,64 +822,69 @@ def show_graph_no(compare_value):
     Output('if_compare', 'value'),
     [Input('initial-data', 'data')]
 )
-def set_if_compare(data):
-    if data is None:
-        raise PreventUpdate
-    return 0
+def reset_if_compare(data):
+    # if data is not None and data['result'] is not None: 
+    if data is not None:
+        return 0
+    raise PreventUpdate
 
-
-@app.callback(Output('wing-number', 'disabled'),
-              [Input('my-graph', 'figure'),
-               Input('plot-data-0', 'figure'),
-               Input('select-bitruss-abcore', 'value')])
-def update_wing_number_style(figure, figure_0, select_model):
-    if figure == {} and figure_0 == {}:
-        return True
-    # if select_model == 2:
-    #     return True
-    # # if figure['data'] == []:
-    # #     return True
-    # return False
 
 
 @app.callback(
-    Output('compare_section', 'style'),
-    [Input('initial-data', 'data')]
+    Output('compare_graph_no', 'value'),
+    [Input('initial-data', 'data'),
+     Input('if_compare', 'value')]
 )
-def show_compare_section(data):
-    if data is None:
-        raise PreventUpdate
-    return {}
+def reset_compare_graph_no(data, if_compare):
+    # if data is not None and data['result'] is not None:
+    if data is not None:
+        return 1
+    # if data is not None:
+    #     return 1
+    if if_compare is not None and (if_compare == 0 or if_compare == []):
+        return 1
+    raise PreventUpdate
 
+@app.callback(Output('my-graph', 'style'),
+              [Input('my-graph', 'figure')],
+              [State('graph-data', 'data')]
+              )
+def update_style(figure, graph_data_0):
+
+    if figure == {}:
+        return {'display': 'none'}
+    if figure['data'] == []:
+        return {'display': 'none'}
+
+    return {'width': '100%'}
 
 @app.callback(Output('my-graph', 'figure'),
-              #   [Input('initial-data','data'),
-              [Input('graph-data', 'data'), ],
+              [Input('graph-data', 'data'), 
+              Input('if_compare','value'),
+              Input('compare_graph_no','value')],
               [State('select-upload-data-type', 'data'), ]
               )
-def display_figure(graph_data, back_data):
-    global New_File
-    global Trigger_compare
-    if Trigger_compare:
-        Trigger_compare = False
-
+def display_figure(all_graph_data, if_compare,compare_no, back_data):
+    if all_graph_data is None or back_data is None:
+        raise PreventUpdate
+    graph_data = all_graph_data[0]
+    if graph_data is None:
+        raise PreventUpdate
+    ctx = [i['prop_id'] for i in dash.callback_context.triggered]
+    if 'if_compare.value' in ctx and if_compare == 1:
+        raise PreventUpdate
+    if 'compare_graph_no.value' in ctx and compare_no == 2:
         raise PreventUpdate
 
-    data = None
-    if graph_data is not None:
-        data = graph_data
-
-    if data is None:
-        raise PreventUpdate
 
     icon = False
     if back_data['select_type'] == 'author-paper':
         icon = True
 
-    # print(graph_data['left'])
     if len(graph_data['left']) == 0 or len(graph_data['right']) == 0 or len(graph_data['edges']) == 0:
         s = go.Scatter(x=[0, 1, ], y=[0, 1, ],
                        mode='markers', marker_color='white')
+        
         return {
             'data': [s],
             'layout': {
@@ -943,48 +920,62 @@ def display_figure(graph_data, back_data):
                                graph_data['edges'], meta, engine, graph_data['color_list'], 1, 2, icon)
     return graph
 
+#################################################################################
 
-# @app.callback(Output('input-box', 'value'),
-#               [Input('initial-data', 'data'), ],
-#               )
-# def change_input_box(data):
-#     if data is None:
-#         raise PreventUpdate
-#     return ""
 
+
+
+# ##########################Input box#################################
 @app.callback(Output('input-box', 'value'),
               [Input('initial-data', 'data'),
-               Input('compare-value-data', 'data'),
+               Input('if_compare','value'),
+               Input('compare_graph_no', 'value'),
                ],
-              [State('graph-data', 'data'),
-               State('graph-data-0', 'data'), ])
-def change_input_box(data, compare_data, graph_data, graph_data_0, ):
-    global New_File
+              [State('graph-data', 'data') ])
+def change_input_box(initial_data,if_compare, compare_graph_no, all_graph_data ):
+    if all_graph_data is None:
+        raise PreventUpdate
+    ctx = [i['prop_id'] for i in dash.callback_context.triggered]
+    if 'initial-data' in ctx and initial_data is not None:
+        return ""
 
-    if compare_data is not None and graph_data is not None and not New_File:
-
-        if compare_data['compare'] == 1:
-            if graph_data['node'] == None:
-                return ""
-            return graph_data['node']
-
-        if compare_data['compare'] == 2:
-            if 'node' in graph_data_0 and graph_data_0['node'] != None:
-                return graph_data_0['node']
-            else:
-                return ""
+    #if change raised by triggering compare, don't act
+    if 'if_compare.value' in ctx:
+        raise PreventUpdate
+    
+    if compare_graph_no == 1:
+        return all_graph_data[0]['node'] if all_graph_data[0]['node'] else ""
+    if compare_graph_no == 2 and len(all_graph_data) >= 2: 
+        return all_graph_data[1]['node'] if all_graph_data[1]['node'] else ""
 
     raise PreventUpdate
+# ####################################################################
 
+# ##########################Wing number#################################
+@app.callback(
+    Output('bitruss-section', 'style'),
+    [Input('select-bitruss-abcore', 'value')]
+)
+def display_bitruss_section(select_model):
+    if select_model is None:
+        raise PreventUpdate
+    if select_model == 2:
+        return {'display': 'None'}
+    return {}
+
+
+@app.callback(Output('wing-number', 'disabled'),
+              [Input('initial-data', 'data'),])
+def update_wing_number_style(data):
+    if data is None:
+        raise PreventUpdate
+    return False
 
 @app.callback(Output('wing-number', 'max'),
               [Input('initial-data', 'data'),
                Input('select-bitruss-abcore', 'value')])
-# Input('graph-data','data')])
 def change_max_wing_number(data, select_model):
     if data is None:
-        raise PreventUpdate
-    if 'max_wing' not in data.keys():
         raise PreventUpdate
 
     return data['max_wing']
@@ -995,29 +986,15 @@ def change_max_wing_number(data, select_model):
 def display_wing_number(data):
     if data is None:
         raise PreventUpdate
-    if 'max_wing' not in data.keys():
-        raise PreventUpdate
 
     max_wing = data['max_wing']
     if max_wing < 5:
         return {i: '{}'.format(i) for i in range(data['max_wing']+1)}
-    interval = (int)(max_wing/5)
-    result = {i*interval: '{}'.format(i*interval) for i in range(5)}
+    interval = (float)(max_wing/5)
+    result = {int(i*interval): '{}'.format(int(i*interval)) for i in range(5)}
     result[max_wing] = str(max_wing)
     return result
 
-
-@app.callback(
-    Output('compare_graph_no', 'value'),
-    [Input('current-upload-data', 'data'),
-     Input('if_compare', 'value')]
-)
-def reset_compare_graph_no(data, if_compare):
-    if data is not None and data['result'] is not None:
-        return 1
-    if if_compare is not None and (if_compare == 0 or if_compare == []):
-        return 1
-    raise PreventUpdate
 
 
 @app.callback(Output('wing-number', 'value'),
@@ -1025,43 +1002,45 @@ def reset_compare_graph_no(data, if_compare):
                Input('compare_graph_no', 'value'),
                Input('select-bitruss-abcore', 'value')],
               [State('graph-data', 'data'),
-               State('graph-data-0', 'data'),
                State('if_compare', 'value')])
-def display_max_wing_number(data, compare_no, select_model, graph_data, graph_data_0, if_compare):
-    global New_File
-
-    if compare_no is not None and graph_data is not None and not New_File:
-        if compare_no == 1 or if_compare == [] or if_compare == 0:
-            return graph_data['wing_number']
-
-        if compare_no == 2:
-            if 'wing_number' in graph_data_0.keys():
-                return graph_data_0['wing_number']
-
+def display_max_wing_number(data, compare_no, select_model, all_graph_data, if_compare):
     if data is None:
         raise PreventUpdate
+    
+    ctx = [i['prop_id'] for i in dash.callback_context.triggered]
+    if 'initial-data.data' in ctx and data is not None:
+        global color_list, max_wing
+        color_list = data['color_list']
+        max_wing = data['max_wing']
+        return data['max_wing']
 
-    if 'max_wing' not in data.keys():
+    if all_graph_data is None:
         raise PreventUpdate
 
+    if compare_no == 1:
+        return all_graph_data[0]['wing_number']
+
+    if compare_no == 2 and len(all_graph_data) >= 2:
+        return all_graph_data[1]['wing_number']
+
     return data['max_wing']
+# ####################################################################
 
 
+# ##########################Tag Cloud#################################
 @app.callback(Output('tag-cloud', 'figure'),
               [Input('graph-data', 'data'),
-               Input('graph-data-0', 'data'),
                Input('compare_graph_no', 'value')],
               [State('if_compare', 'value')]
               )
-def generate_tag_cloud(graph_data, graph_data_0, compare_no, if_compare):
-    data = graph_data
-
-    if data is None:
+def generate_tag_cloud(all_graph_data, compare_no, if_compare):
+    if all_graph_data is None:
         raise PreventUpdate
 
-    if not (if_compare == [] or if_compare == 0):
-        if compare_no is not None and compare_no == 2:
-            data = graph_data_0
+    data = all_graph_data[0]
+
+    if compare_no is not None and compare_no == 2 and len(all_graph_data) >= 2:
+            data = all_graph_data[1]
 
     if data['right'] == []:
         return {
@@ -1087,7 +1066,6 @@ def generate_tag_cloud(graph_data, graph_data_0, compare_no, if_compare):
             )
         }
 
-    # name = get_node_list_name(data['right'], meta, engine)
     name = get_right_node_list_name(data['right'], meta, engine)
     text = " ".join(name.values())
     text = ''.join([i for i in text if i.isalpha() or i == " "])
@@ -1098,22 +1076,28 @@ def generate_tag_cloud(graph_data, graph_data_0, compare_no, if_compare):
 
     return generate_word_cloud(words)
 
+@app.callback(Output('tag-cloud','style'),
+             [Input('tag-cloud','figure')])
+def show_degree_graph(figure):
+    if figure is not None:
+        return {}
+# ####################################################################
 
+
+# ##########################Degree Bar char#################################
 @app.callback(Output('degree-graph', 'figure'),
               [Input('graph-data', 'data'),
-               Input('graph-data-0', 'data'),
                Input('compare_graph_no', 'value')],
               [State('if_compare', 'value'), ]
               )
-def degree_plot(graph_data, graph_data_0, compare_no, if_compare):
-    data = graph_data
-
-    if data is None:
+def degree_plot(all_graph_data, compare_no, if_compare):
+    if all_graph_data is None:
         raise PreventUpdate
 
-    if not (if_compare == [] or if_compare == 0):
-        if compare_no is not None and compare_no == 2:
-            data = graph_data_0
+    data = all_graph_data[0]
+
+    if compare_no is not None and compare_no == 2 and len(all_graph_data) >= 2:
+            data = all_graph_data[1]
 
     y = degree_calculate(data['left'], data['right'], data['edges'])
 
@@ -1129,25 +1113,32 @@ def degree_plot(graph_data, graph_data_0, compare_no, if_compare):
                             textposition='auto', hoverinfo='text', hovertext=[]), ], layout=layout)
     return fig
 
+@app.callback(Output('degree-graph','style'),
+             [Input('degree-graph','figure')])
+def show_degree_graph(figure):
+    if figure is not None:
+        return {}
+    
+# ####################################################################
 
+
+# ##########################Tables #################################
 @app.callback(Output('authortable', 'children'),
               [Input('graph-data', 'data'),
-               Input('graph-data-0', 'data'),
                Input('compare_graph_no', 'value')],
               [State('if_compare', 'value'),
                State('select-upload-data-type', 'data')]
               )
-def generate_datatable(graph_data, graph_data_0, compare_no, if_compare, select_data):
-    data = graph_data
-
-    title = 'Author'
-
-    if data is None:
+def generate_datatable(all_graph_data, compare_no, if_compare, select_data):
+    if all_graph_data is None:
         raise PreventUpdate
 
-    if not (if_compare == [] or if_compare == 0):
-        if compare_no is not None and compare_no == 2:
-            data = graph_data_0
+    data = all_graph_data[0]
+
+    if compare_no is not None and compare_no == 2 and len(all_graph_data) >= 2:
+            data = all_graph_data[1]
+
+    title = 'Author'
 
     if select_data['select_type'] != 'author-paper':
         title = 'Left'
@@ -1204,20 +1195,19 @@ def generate_datatable(graph_data, graph_data_0, compare_no, if_compare, select_
 
 @app.callback(Output('papertable', 'children'),
               [Input('graph-data', 'data'),
-               Input('graph-data-0', 'data'),
                Input('compare_graph_no', 'value')],
               [State('if_compare', 'value'),
                State('select-upload-data-type', 'data')])
-def generate_datatable(graph_data, graph_data_0, compare_no, if_compare, select_data):
-    data = graph_data
-
-    if data is None:
+def generate_datatable(all_graph_data, compare_no, if_compare, select_data):
+    if all_graph_data is None:
         raise PreventUpdate
 
+    data = all_graph_data[0]
+
+    if compare_no is not None and compare_no == 2 and len(all_graph_data) >= 2:
+            data = all_graph_data[1]
+
     title = 'Paper'
-    if not (if_compare == [] or if_compare == 0):
-        if compare_no is not None and compare_no == 2:
-            data = graph_data_0
 
     if select_data['select_type'] != 'author-paper':
         title = 'Right'
@@ -1271,23 +1261,21 @@ def generate_datatable(graph_data, graph_data_0, compare_no, if_compare, select_
             'fontWeight': 'bold'
         },
     )
+# ####################################################################
 
 
+# ##########################Butterfly count display#################################
 @app.callback(Output('butterfly_count', 'children'),
               [Input('graph-data', 'data'),
-               Input('graph-data-0', 'data'),
                Input('compare_graph_no', 'value')],
               [State('if_compare', 'value')])
-def display_butterfly_count(graph_data, graph_data_0, compare_no, if_compare):
-    data = graph_data
-
-    if data is None:
+def display_butterfly_count(all_graph_data, compare_no, if_compare):
+    if all_graph_data is None:
         raise PreventUpdate
 
-    if not (if_compare == [] or if_compare == 0):
-        if compare_no is not None:
-            if compare_no == 2:
-                data = graph_data_0
+    data = all_graph_data[0]
+    if compare_no is not None and compare_no == 2 and len(all_graph_data) >= 2:
+        data = all_graph_data[1]
 
     c = 0
     if 'bf_count' in data.keys():
@@ -1298,52 +1286,45 @@ def display_butterfly_count(graph_data, graph_data_0, compare_no, if_compare):
 
 @app.callback(Output('bcc_count', 'children'),
               [Input('graph-data', 'data'),
-               Input('graph-data-0', 'data'),
                Input('compare_graph_no', 'value')],
               [State('if_compare', 'value')])
-def display_butterfly_count(graph_data, graph_data_0, compare_no, if_compare):
-    data = graph_data
-
-    if data is None:
+def display_butterfly_count(all_graph_data, compare_no, if_compare):
+    if all_graph_data is None:
         raise PreventUpdate
 
-    if not (if_compare == [] or if_compare == 0):
-        if compare_no is not None:
-            if compare_no == 2:
-                data = graph_data_0
+    data = all_graph_data[0]
+    if compare_no is not None and compare_no == 2 and len(all_graph_data) >= 2:
+        data = all_graph_data[1]
 
     c = 0
     if 'bcc_count' in data.keys():
         c = data['bcc_count']
     c = round(c, 3)
     return html.H5(str(c))
+# ####################################################################
 
 
+
+##########################Store Data (interact with database)#################################
 @app.callback(Output('initial-data', 'data'),
-              [Input('datatable-upload-container', 'data'),
-               Input("current-upload-data", "data")])
-def initial_graph(data, modal_data):
-    if data is None and modal_data is None:
+              [
+            Input("current-upload-data", "data"),])
+            #   Input('if_compare','value'),
+            #   Input('open','n_clicks')],)
+            #   [State('current-upload-data','data')])
+def initial_graph(data):
+    ctx = [i['prop_id'] for i in dash.callback_context.triggered]
+    # if 'open.n_clicks' in ctx:
+    #     return None
+    if 'current-upload-data.data' not in ctx:
         raise PreventUpdate
-    if modal_data['result'] == None:
-        raise PreventUpdate
-    global Exisiting_Graph
-    global New_File
-    global color_list
-    global prev_wing_no
 
     graph_data = {}
 
     max_wing = get_max_hier(meta, engine)
     graph_data['max_wing'] = max_wing
 
-    Exisiting_Graph = True
-    color_list = colors(max_wing+1)
-    graph_data['color_list'] = color_list
-    prev_wing_no = graph_data['max_wing']
-    # graph_data['max_alpha'] = get_max_alpha(meta, engine)
-    # graph_data['max_beta'] = get_max_beta(meta, engine)
-
+    graph_data['color_list'] = colors(max_wing+1)
     return graph_data
 
 
@@ -1355,14 +1336,15 @@ def initial_graph(data, modal_data):
               Input('beta', 'value'),
               Input('if_compare', 'value'),
               Input('compare_graph_no', 'value'),
-              Input('select-bitruss-abcore', 'value')],
+              Input('select-bitruss-abcore', 'value'),],
               [State('graph-data', 'data')])
-def display_graph(node_value, wing_number, alpha, beta, if_compare, compare_graph_no, select_model, g_data):
-    global Exisiting_Graph
-    global New_File
-    global color_list
-    global prev_wing_no
-    g = None
+def display_graph(node_value, wing_number, alpha, beta, if_compare, compare_graph_no, select_model,  all_g_data):
+    ctx = [i['prop_id'] for i in dash.callback_context.triggered]
+    global color_list,New_File,max_wing
+    # not ready to receive new information 
+    if color_list == []:
+        # raise PreventUpdate
+        return None
 
     if alpha is not None and beta is not None:
         alpha = int(alpha)
@@ -1371,9 +1353,32 @@ def display_graph(node_value, wing_number, alpha, beta, if_compare, compare_grap
     compare = False
     if if_compare is not None and if_compare == [1]:
         compare = True
+    
+    # initialize if new file comes:
+    if all_g_data is None or New_File:
+        all_g_data = [{}]
 
-    if compare and compare_graph_no is not None and compare_graph_no == 2 and not New_File:
+    # add new space for new graph if trigger compare
+    graph_no = compare_graph_no-1
+    if compare and len(all_g_data) == 1:
+        all_g_data.append({})
+        # initialize values for a new graph
+        node_value = ""
+        select_model = 1
+        wing_number = max_wing
+    
+
+
+
+    # if compare is just triggered
+    if ctx[0] == 'if_compare.value' and not New_File:
+        graph_no = 1
+    elif ctx[0] == 'compare_graph_no.value' and len(all_g_data) >= 2: # if selecting sides
         raise PreventUpdate
+    
+    New_File = False
+
+    g_data = all_g_data[graph_no]
 
     input_data = {
         'meta': meta,
@@ -1384,7 +1389,7 @@ def display_graph(node_value, wing_number, alpha, beta, if_compare, compare_grap
         'alpha': alpha,
         'beta': beta,
 
-        'compare': compare,
+        'compare': graph_no, # 0 or 1
 
         'max_alpha': None,
         'max_beta': None,
@@ -1396,160 +1401,51 @@ def display_graph(node_value, wing_number, alpha, beta, if_compare, compare_grap
         'model': select_model,
     }
 
-    if New_File is False:
-        if g_data != None:
-            if 'alpha' in g_data.keys() and g_data['alpha'] != alpha:
-                input_data['alpha_change'] = True
-            if 'beta' in g_data.keys() and g_data['beta'] != beta:
-                input_data['beta_change'] = True
-            if 'wing_number' in g_data.keys() and g_data['wing_number'] != wing_number:
-                input_data['wing_number_change'] = True
-            if 'node' in g_data.keys() and g_data['node'] != node_value:
-                input_data['node_change'] = True
-            if 'max_alpha' in g_data.keys():
-                input_data['max_alpha'] = g_data['max_alpha']
-            if 'max_beta' in g_data.keys():
-                input_data['max_beta'] = g_data['max_beta']
-        else:
-            input_data['alpha_change'] = True
-            input_data['beta_change'] = True
-            input_data['wing_number_change'] = True
-            input_data['node_change'] = True
 
-    if Exisiting_Graph:
-        graph_data = wing_node_select(input_data)
-        if graph_data is None:
-            New_File = False
-
-            raise PreventUpdate
-
-        if New_File:
-            input_data['max_alpha'], input_data['max_beta'] = get_total_max_alpha_beta(
-                meta, engine)
-
-        added = input_data.copy()
-        added.pop('meta', None)
-        added.pop('engine', None)
-        graph_data.update(added)
-
-        bf, bcc = count_butterfly(
-            graph_data['left'], graph_data['right'], graph_data['edges'])
-
-        graph_data['bf_count'] = bf
-        graph_data['bcc_count'] = bcc
-        # graph_data['bf_count'] = 1
-        # graph_data['bcc_count'] = 2
-        New_File = False
-        return graph_data
-
-    New_File = False
-
-    raise PreventUpdate
-
-
-@app.callback(Output('graph-data-0', 'data'),
-              [
-              Input('input-box', 'value'),
-              Input('wing-number', 'value'),
-              Input('alpha', 'value'),
-              Input('beta', 'value'),
-              Input('if_compare', 'value'),
-              Input('compare_graph_no', 'value'),
-              Input('select-bitruss-abcore', 'value')],
-              [State('graph-data-0', 'data'),
-               State('graph-data', 'data')])
-def display_graph(node_value, wing_number, alpha, beta, if_compare, compare_graph_no, select_model, g_data, data):
-    global Exisiting_Graph
-    global New_File
-    global color_list
-    global prev_wing_no
-    global First_compare_0
-    g = None
-
-    if alpha is not None and beta is not None:
-        alpha = int(alpha)
-        beta = int(beta)
-
-    if if_compare == [] or if_compare == 0:
-        return {'compare': False}
-
-    # just trigger the compare
-    if g_data == {'compare': False} and if_compare == [1]:
-        data['compare'] = True
-        First_compare_0 = True
-        return data
-
-    if g_data is None and if_compare == [1]:
-        data['compare'] = True
-        First_compare_0 = True
-        return data
-
-    compare = False
-    if if_compare is not None and if_compare == [1]:
-        compare = True
-
-    if compare and compare_graph_no is not None and compare_graph_no == 1:
-        raise PreventUpdate
-
-    input_data = {
-        'meta': meta,
-        'engine': engine,
-        'node': node_value,
-        'wing_number': wing_number,
-        'color_list': color_list,
-        'alpha': alpha,
-        'beta': beta,
-
-        'compare': compare,
-
-        'max_alpha': data['max_alpha'],
-        'max_beta': data['max_beta'],
-
-        'alpha_change': False,
-        'beta_change': False,
-        'node_change': False,
-        'wing_number_change': False,
-        'model': select_model,
-    }
-
-    if g_data != None:
-        if 'alpha' in g_data.keys() and g_data['alpha'] != alpha:
-            input_data['alpha_change'] = True
-        if 'beta' in g_data.keys() and g_data['beta'] != beta:
-            input_data['beta_change'] = True
-        if 'wing_number' in g_data.keys() and g_data['wing_number'] != wing_number:
-            input_data['wing_number_change'] = True
-        if 'node' in g_data.keys() and g_data['node'] != node_value:
-            input_data['node_change'] = True
-        if 'max_alpha' in g_data.keys():
-            input_data['max_alpha'] = g_data['max_alpha']
-        if 'max_beta' in g_data.keys():
-            input_data['max_beta'] = g_data['max_beta']
-    else:
+    # When start a new graph
+    if g_data == {}:
         input_data['alpha_change'] = True
         input_data['beta_change'] = True
         input_data['wing_number_change'] = True
         input_data['node_change'] = True
+        input_data['max_alpha'], input_data['max_beta'] = get_total_max_alpha_beta(
+            meta, engine)
+    else:
+        input_data['max_alpha'], input_data['max_beta'] = g_data['max_alpha'],g_data['max_beta']
+    
+    #See where changes
+    if 'alpha.value' in ctx:
+        input_data['alpha_change'] = True
+    elif  'beta.value' in ctx:
+        input_data['beta_change'] = True
+    elif  'wing-number.value' in ctx:
+        input_data['wing_number_change'] = True
+    elif 'input-box.value' in ctx:
+        input_data['node_change'] = True
 
-    if Exisiting_Graph:
-        graph_data = wing_node_select(input_data)
-        if graph_data is None:
-            raise PreventUpdate
 
-        added = input_data.copy()
-        added.pop('meta', None)
-        added.pop('engine', None)
-        graph_data.update(added)
+    graph_data = wing_node_select(input_data)
+    if graph_data is None:
+        raise PreventUpdate
 
-        bf, bcc = count_butterfly(
-            graph_data['left'], graph_data['right'], graph_data['edges'])
+    # generate final graph_data
+    added = input_data.copy()
+    added.pop('meta', None)
+    added.pop('engine', None)
+    graph_data.update(added)
 
-        graph_data['bf_count'] = bf
-        graph_data['bcc_count'] = bcc
 
-        return graph_data
+    #generate bf and bcc info
+    bf, bcc = count_butterfly(
+        graph_data['left'], graph_data['right'], graph_data['edges'])
+    graph_data['bf_count'] = bf
+    graph_data['bcc_count'] = bcc
 
-    raise PreventUpdate
+
+    all_g_data[graph_no] = graph_data
+    return all_g_data
+
+
 ################# compare graphs #######################
 
 
@@ -1558,54 +1454,46 @@ def display_graph(node_value, wing_number, alpha, beta, if_compare, compare_grap
     [Input('if_compare', 'value'), ]
 )
 def turn_off_plot_data_0(if_compare):
-    if if_compare == [] or if_compare == 0:
+    if if_compare == 0 or if_compare == []:
         return {'display': 'none'}
     return {}
 
 
 @app.callback(
-    # Output('plot-data-0', 'style'),
     Output('plot-data-col-0', 'style'),
-    # [Input('graph-data-0', 'data')],
-    [Input('graph-data-0', 'data'),
-     Input('if_compare', 'value'),
-     Input('first-graph-col', 'width')],
+    [Input('if_compare', 'value')],
 )
-def show_compare_graph(data, if_compare, width):
-    # def show_compare_graph(data):
+def show_compare_graph(if_compare,):
     if if_compare == 0 or if_compare == []:
         return {'display': 'none'}
 
-    if "compare" in data.keys() and data['compare'] is True:
-        return {"width": '100%'}
-
-    return {'display': 'none'}
+    return {"width": '100%'}
 
 
 @app.callback(
     Output('plot-data-0', 'figure'),
-    [Input('graph-data-0', 'data'), ],
-    [State('select-upload-data-type', 'data'),
-     State('compare-value-data', 'data')]
+    [Input('graph-data', 'data'), 
+    Input('if_compare','value'),
+    Input('compare_graph_no','value')],
+    [State('select-upload-data-type', 'data')]
 )
-def display_figure_1(graph_data, back_data, compare_data):
+def display_figure_1(all_graph_data,if_compare,compare_no, back_data):
     global New_File
-    global Trigger_compare_0
-    global First_compare_0
-    if Trigger_compare_0 and not First_compare_0:
-        Trigger_compare_0 = False
+    if all_graph_data is None or len(all_graph_data) < 2 or New_File:
+        raise PreventUpdate
+    graph_data = all_graph_data[1]
+    if graph_data is None or graph_data['compare'] == 0:
         raise PreventUpdate
 
-    if graph_data is None:
+    ctx = [i['prop_id'] for i in dash.callback_context.triggered]
+    if 'if_compare.value' in ctx and if_compare != [1]:
         raise PreventUpdate
-
-    if 'compare' in graph_data.keys() and graph_data['compare'] is False:
-        raise PreventUpdate
-
+    if 'if_compare.value' not in ctx:
+        if 'compare_graph_no.value' in ctx and compare_no == 1:
+            raise PreventUpdate
     icon = False
     if back_data['select_type'] == 'author-paper':
         icon = True
-    First_compare_0 = False
 
     if len(graph_data['left']) == 0 or len(graph_data['right']) == 0 or len(graph_data['edges']) == 0:
         s = go.Scatter(x=[0, 1, ], y=[0, 1, ],
@@ -1651,13 +1539,6 @@ def display_figure_1(graph_data, back_data, compare_data):
     [Input('first-graph-col', 'width')],
 )
 def change_col_0(width):
-    # if "compare" in data.keys() and data['compare'] is True:
-    #     return 6
-    # print("change something", style)
-    # if style != {'display': 'none'}:
-        # return {'width': '48%', 'display': 'inline-block'}
-        #     print("width is 6 rn")
-        # return 6
     # raise PreventUpdate
     if width == 6:
         return 6
@@ -1666,221 +1547,53 @@ def change_col_0(width):
 @app.callback(
     Output('first-graph-col', 'width'),
     [Input('if_compare', 'value'), ]
-    #  Input('plot-data-col-0', 'style')],
 )
 def change_col_first(if_compare):
-    # if "compare" in data.keys() and data['compare'] is True:
-    #     return 6
-    # if 'compare' in data.keys() and data['compare'] == False:
-    #     return 12
     if (if_compare == [] or if_compare == 0):
         return 12
-        # return {'width': '100%'}
     if if_compare == [1]:
         return 6
         # return {'width': '48%', 'display': 'inline-block'}
 
     raise PreventUpdate
+####################################################################
+
+
+
 
 ########################## alpha-beta-core ############
+@app.callback(
+    Output('abcore-section', 'style'),
+    [Input('select-bitruss-abcore', 'value')]
+)
+def display_abcore_section(select_model):
+    if select_model is None:
+        raise PreventUpdate
+    if select_model == 1:
+        return {'display': 'None'}
+    return {}
+
+
+
 
 
 @app.callback(
     Output('alpha', 'disabled'),
-    [Input('my-graph', 'figure'),
-     Input('plot-data-0', 'figure'),
-     Input('select-bitruss-abcore', 'value')]
+    [Input('select-bitruss-abcore', 'value')]
 )
-def update_alpha_slider(figure, figure_0, select_model):
-    if figure == {} and figure_0 == {}:
-        return True
-    # if select_model == 1:
-    #     return True
-    # if figure['data'] == []:
-    #     return True
-    # return False
-
-
-@app.callback(
-    Output('beta', 'disabled'),
-    [Input('my-graph', 'figure'),
-     Input('plot-data-0', 'figure'),
-     Input('select-bitruss-abcore', 'value')]
-)
-def update_beta_slider(figure, figure_0, select_model):
-    if figure == {} and figure_0 == {}:
-        return True
-    # if select_model == 1:
-    #     return True
-    # if figure['data'] == []:
-    #     return True
-    # return False
-
-
-@app.callback(
-    Output('compare-value-data', 'data'),
-    [Input('compare_graph_no', 'value'),
-     Input('if_compare', 'value')],
-    [State('compare-value-data', 'data')]
-)
-def store_compare_data(compare_no, if_compare, prev_comp_data):
-    global New_File_compare
-    if compare_no is None or if_compare is None:
-
-        raise PreventUpdate
-
-    if not New_File_compare:  # dont trigger change in the first time
-        global Trigger_compare_alpha
-        global Trigger_compare_beta
-        global Trigger_compare_0
-        global Trigger_compare
-        global Trigger_select_value
-
-        Trigger_compare_alpha = True
-        Trigger_compare_beta = True
-
-        if if_compare == [1]:
-            Trigger_compare = True
-            Trigger_compare_0 = True
-        Trigger_select_value = True
-    else:
-        New_File_compare = False
-        return {'compare': 1, "if_compare": if_compare}
-
-    # if prev_comp_data is not None:
-    #     if prev_comp_data['if_compare'] == [] or prev_comp_data['if_compare'] == 0 and if_compare == [1]:
-    #         global
-    # compare_value = 0
-    if if_compare == [] or if_compare == 0 or compare_no == 1:
-        return {'compare': 1, "if_compare": if_compare}
-
-    if compare_no == 2:
-        return {'compare': 2, "if_compare": if_compare}
-
-    raise PreventUpdate
-
-
-@app.callback(
-    Output('alpha', 'value'),
-    [
-        Input('compare-value-data', 'data'),
-        Input('select-bitruss-abcore', 'value')],
-    [State('graph-data', 'data'),
-     State('graph-data-0', 'data')]
-)
-def reset_alpha_value(compare_data, select_value, graph_data, graph_data_0):
-    if graph_data is None:
-        raise PreventUpdate
-
-    data = graph_data
-
-    global Trigger_compare_alpha
-    if Trigger_compare_alpha:
-        Trigger_compare_alpha = False
-        if compare_data['compare'] == 1:
-            return graph_data['alpha']
-        if compare_data['compare'] == 2:
-            if 'alpha' in graph_data_0.keys():
-                return graph_data_0['alpha']
-
-    if compare_data['compare'] == 2:
-        data = graph_data_0
-
-    if select_value == 1:
-        return 0
-
-    if select_value == 2:
-        if data['max_alpha'] > data['max_beta']:
-            return data['max_alpha']
-
-    return 0
-
+def update_alpha_slider(select_model):
+    if select_model == 1:
+        return True 
+    return False
 
 @app.callback(Output('alpha', 'max'),
-              [Input('initial-data', 'data'),
-               Input('my-graph', 'figure'),
-               Input('plot-data-0', 'figure'),
-               Input('compare_graph_no', 'value')],
-              [State('graph-data', 'data'),
-               State('graph-data-0', 'data'),
-               State('if_compare', 'value')])
-def change_max_alpha(initial_data, figure, figure_0, compare_no, graph_data, graph_data_0, if_compare):
-    data = graph_data
+              [Input('select-bitruss-abcore', 'value')],
+              [State('graph-data', 'data'),])
+def change_max_alpha(select_model, data):
     if data is None:
         raise PreventUpdate
 
-    if not (if_compare == [] or if_compare == 0):
-        if compare_no is not None:
-            if compare_no == 2:
-                data = graph_data_0
-
-    # if data['wing_number_change'] or data['node_change']:
-
-    return data['max_alpha']
-    # raise PreventUpdate
-
-
-@app.callback(Output('beta', 'max'),
-              [Input('initial-data', 'data'),
-               Input('my-graph', 'figure'),
-               Input('plot-data-0', 'figure'),
-               Input('compare_graph_no', 'value')],
-              [State('graph-data', 'data'),
-               State('graph-data-0', 'data'),
-               State('if_compare', 'value')])
-def change_max_alpha(initial_data, figure, figure_0, compare_no, graph_data, graph_data_0, if_compare):
-    data = graph_data
-    if data is None:
-        raise PreventUpdate
-
-    if not (if_compare == [] or if_compare == 0):
-        if compare_no is not None:
-            if compare_no == 2:
-                data = graph_data_0
-
-    # if data['wing_number_change'] or data['node_change']:
-
-    return data['max_beta']
-
-
-@app.callback(
-    Output('beta', 'value'),
-    [
-        Input('compare-value-data', 'data'),
-        Input('select-bitruss-abcore', 'value')],
-    [State('graph-data', 'data'),
-     State('graph-data-0', 'data')]
-)
-def reset_beta_value(compare_data, select_value, graph_data, graph_data_0):
-    if graph_data is None:
-        raise PreventUpdate
-
-    data = graph_data
-
-    global Trigger_compare_beta
-    if Trigger_compare_beta:
-        Trigger_compare_beta = False
-        if compare_data['compare'] == 1:
-
-            return graph_data['beta']
-        if compare_data['compare'] == 2:
-            if 'beta' in graph_data_0.keys():
-
-                return graph_data_0['beta']
-
-    if compare_data['compare'] == 2:
-        data = graph_data_0
-
-    if select_value == 1:
-
-        return 0
-
-    if select_value == 2:
-
-        if data['max_alpha'] < data['max_beta']:
-            return data['max_beta']
-
-    return 0
+    return data[0]['max_alpha']
 
 
 @app.callback(Output('alpha', 'marks'),
@@ -1891,20 +1604,101 @@ def display_alpha_number(max_number):
     raise PreventUpdate
 
 
-@app.callback(Output('beta', 'marks'),
-              [Input('beta', 'max')])
-def display_beta_number(max_number):
-    if max_number is not None:
-        return process_slider_mark(max_number)
-    raise PreventUpdate
+@app.callback(
+    Output('alpha', 'value'),
+    [Input('if_compare','value'),
+    Input('compare_graph_no', 'value'),
+    Input('select-bitruss-abcore', 'value')],
+    [State('graph-data', 'data')]
+)
+def reset_alpha_value(if_compare, compare_graph_no, select_model, all_graph_data):
+    if all_graph_data is None or select_model == 1:
+        raise PreventUpdate
+
+    ctx = dash.callback_context.triggered[0]['prop_id']
+    if 'select-bitruss-abcore.value' in ctx:
+        if all_graph_data[0]['max_alpha'] > all_graph_data[0]['max_beta']:
+            return all_graph_data[0]['max_alpha']
+        else:
+            return 0
+
+    # remain unchange if just trigger a compare
+    if 'if_compare.value' in ctx:
+        raise PreventUpdate
+    
+    if compare_graph_no == 1:
+        return all_graph_data[0]['alpha']
+    if compare_graph_no == 2:
+        return all_graph_data[1]['alpha']
+
+    return 0
 
 @app.callback(Output('alpha_value', 'children'),
               [Input('alpha', 'value')])
-def update_alpha_value(data):
+def update_beta_value(data):
     if data is None:
         raise PreventUpdate
 
     return html.P(data, style={'marginLeft': '16px'},)
+
+
+
+@app.callback(
+    Output('beta', 'disabled'),
+    [Input('select-bitruss-abcore', 'value')]
+)
+def update_alpha_slider(select_model):
+    if select_model == 1:
+        return True 
+    return False
+
+
+@app.callback(Output('beta', 'max'),
+              [Input('select-bitruss-abcore', 'value')],
+              [State('graph-data', 'data'),])
+def change_max_alpha(select_model, data):
+    if data is None:
+        raise PreventUpdate
+
+    return data[0]['max_beta']
+
+@app.callback(Output('beta', 'marks'),
+              [Input('beta', 'max')])
+def display_alpha_number(max_number):
+    if max_number is not None:
+        return process_slider_mark(max_number)
+    raise PreventUpdate
+
+
+@app.callback(
+    Output('beta', 'value'),
+    [Input('if_compare','value'),
+    Input('compare_graph_no', 'value'),
+    Input('select-bitruss-abcore', 'value')],
+    [State('graph-data', 'data')]
+)
+def reset_alpha_value(if_compare, compare_graph_no, select_model, all_graph_data):
+    if all_graph_data is None or select_model == 1:
+        raise PreventUpdate
+
+    ctx = dash.callback_context.triggered[0]['prop_id']
+    if 'select-bitruss-abcore.value' in ctx:
+        if all_graph_data[0]['max_alpha'] < all_graph_data[0]['max_beta']:
+            return all_graph_data[0]['max_beta']
+        else:
+            return 0
+
+    # remain unchange if just trigger a compare
+    if 'if_compare.value' in ctx:
+        raise PreventUpdate
+    
+    if compare_graph_no == 1:
+        return all_graph_data[0]['beta']
+    if compare_graph_no == 2:
+        return all_graph_data[1]['beta']
+
+    return 0
+
 
 @app.callback(Output('beta_value', 'children'),
               [Input('beta', 'value')])
@@ -1914,43 +1708,64 @@ def update_beta_value(data):
 
     return html.P(data, style={'marginLeft': '16px'},)
 
-# select model
-
-
 @app.callback(
     Output('select-bitruss-abcore', 'style'),
-    [Input('my-graph', 'figure')]
+    [Input('initial-data', 'data')]
 )
-def display_select_bitruss_abcore(figure):
-    if figure is None or figure is {}:
+def display_select_bitruss_abcore(data):
+    if data is None:
         return {'display': 'None'}
     return {}
 
-# global just_close_compare = False
 
-
+######################Select bitruss abcore#######################
 @app.callback(
     Output('select-bitruss-abcore', 'value'),
-    [Input('compare-value-data', 'data'), ],
-    [State('if_compare', 'value'),
-     State('graph-data', 'data'),
-     State('graph-data-0', 'data')]
+    [Input('if_compare', 'value'), 
+    Input('compare_graph_no','value'),
+    Input('initial-data','data')],
+    [State('graph-data','data')]
 )
-def select_bitruss_value_change(compare_data, if_compare, graph_data, graph_data_0):
-    global Trigger_select_value
-
-    data = graph_data
-    if compare_data['compare'] == 2:
-        data = graph_data_0
-
-    if data is None:
+def select_bitruss_abcore_change(if_compare, compare_graph_no, initial_data, all_graph_data):
+    if all_graph_data is None:
+        raise PreventUpdate
+    
+    ctx = dash.callback_context.triggered[0]['prop_id']
+    if 'initial-data.data' in ctx:
         return 1
+    if 'if_comparae.value' in ctx:
+        raise PreventUpdate
+    
+    if compare_graph_no == 1:
+        return all_graph_data[0]['model']
+    if compare_graph_no == 2:
+        return all_graph_data[1]['model']
+    
+    raise PreventUpdate
 
-    if Trigger_select_value:
-        Trigger_select_value = False
-        if 'model' in data.keys():
-            return data['model']
-    return 1
+
+
+# @app.callback(
+#     Output('select-bitruss-abcore', 'value'),
+#     [Input('compare-value-data', 'data'), ],
+#     [State('if_compare', 'value'),
+#      State('graph-data', 'data')]
+# )
+# def select_bitruss_value_change(compare_data, if_compare, all_graph_data):
+#     global Trigger_select_value
+
+#     data = all_graph_data[0]
+#     if compare_data['compare'] == 2:
+#         data = all_graph_data[1]
+
+#     if data is None:
+#         return 1
+
+#     if Trigger_select_value:
+#         Trigger_select_value = False
+#         if 'model' in data.keys():
+#             return data['model']
+#     return 1
 
 
 def process_slider_mark(max_value):
